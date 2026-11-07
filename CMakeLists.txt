@@ -3,4 +3,6 @@ project(chad_cheat)
 
 add_library(chad_cheat SHARED Main.cpp)
 
-target_link_libraries(chad_cheat log)
+# Подключаем Dobby (он будет скачан в папку Dobby)
+add_subdirectory(Dobby)
+target_link_libraries(chad_cheat dobby log)
