@@ -12,9 +12,6 @@ jobs:
         with:
           ndk-version: r25c
 
-      - name: Clone Dobby
-        run: git clone https://github.com/jmpews/Dobby.git
-
       - name: Build with CMake
         run: |
           mkdir build && cd build
