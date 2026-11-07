@@ -1,4 +1,4 @@
-#define IMGUI_DEFINE_MATH_OPERATORS // <--- ОБЯЗАТЕЛЬНО В САМОМ ВЕРХУ
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include <jni.h>
 #include <android/log.h>
 #include <unistd.h>
@@ -13,52 +13,59 @@
 
 #include "imgui.h"
 #include "imgui_impl_opengl3.h"
-// #include "imgui_impl_android.h" // Пока отключим, чтобы не было конфликтов
-#include "chad_menu.h" // Твой файл от Клода
+#include "chad_menu.h"
 
 #define LOG_TAG "CHAD_MENU"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 
 bool g_Initialized = false;
+int g_FrameCount = 0; // Счетчик кадров для логов
 
-// Оригинальная функция eglSwapBuffers
 EGLBoolean (*orig_eglSwapBuffers)(EGLDisplay dpy, EGLSurface surface);
 
-// Наш хук для отрисовки
 EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface) {
+    if (g_FrameCount < 5) {
+        LOGI("Хук отрисовки вызван! Кадр: %d", g_FrameCount);
+    }
+
     if (!g_Initialized) {
-        // Инициализация ImGui при первом кадре
+        LOGI("Попытка инициализации ImGui...");
         IMGUI_CHECKVERSION();
         ImGui::CreateContext();
         ImGuiIO& io = ImGui::GetIO();
         io.IniFilename = NULL;
 
-        // Инициализация шрифтов и стиля из меню Клода
-        chad::LoadFonts("fonts"); 
-        
-        // Инициализация бэкенда OpenGL
-        ImGui_ImplOpenGL3_Init("#version 300 es");
+        // Отключаем шрифты для теста, чтобы исключить краш из-за них
+        // chad::LoadFonts("fonts"); 
+
+        if (!ImGui_ImplOpenGL3_Init("#version 300 es")) {
+            LOGI("ОШИБКА: Не удалось инициализировать OpenGL3 backend!");
+        } else {
+            LOGI("OpenGL3 backend успешно инициализирован.");
+        }
         
         g_Initialized = true;
-        LOGI("=== ImGui и меню CHAD инициализированы! ===");
     }
 
-    // Начинаем новый кадр
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui::NewFrame();
+    if (g_Initialized) {
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui::NewFrame();
 
-    // --- ВЫЗОВ МЕНЮ ОТ КЛОДА ---
-    chad::Render(); 
+        // Вызываем меню Клода
+        chad::Render(); 
 
-    // Рендерим
-    ImGui::Render();
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-    // Вызываем оригинальную функцию, чтобы игра рисовалась дальше
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        
+        if (g_FrameCount < 5) {
+            LOGI("Кадр %d успешно отрисован.", g_FrameCount);
+        }
+    }
+    
+    g_FrameCount++;
     return orig_eglSwapBuffers(dpy, surface);
 }
 
-// Функция для установки хука
 void inline_hook(void* target, void* replace, void** backup) {
     if (!target) return;
     *backup = malloc(16);
@@ -69,8 +76,8 @@ void inline_hook(void* target, void* replace, void** backup) {
     mprotect((void*)page_start, page_size * 2, PROT_READ | PROT_WRITE | PROT_EXEC);
 
     uint32_t* patch = (uint32_t*)target;
-    patch[0] = 0x58000050; // LDR X16, #8
-    patch[1] = 0xd61f0200; // BR X16
+    patch[0] = 0x58000050;
+    patch[1] = 0xd61f0200;
     patch[2] = (uint32_t)((uintptr_t)replace & 0xFFFFFFFF);
     patch[3] = (uint32_t)((uintptr_t)replace >> 32);
 
@@ -80,16 +87,19 @@ void inline_hook(void* target, void* replace, void** backup) {
 
 __attribute__((constructor))
 void on_load() {
-    LOGI("=== CHAD PLUGIN ЗАГРУЖЕН ===");
+    LOGI("=== CHAD PLUGIN ЗАГРУЖЕН (DEBUG MODE) ===");
 
-    // Хукаем eglSwapBuffers для отрисовки меню
     void* egl = dlopen("libEGL.so", RTLD_LAZY);
     if (egl) {
         void* swap = dlsym(egl, "eglSwapBuffers");
         if (swap) {
             inline_hook(swap, (void*)hook_eglSwapBuffers, (void**)&orig_eglSwapBuffers);
-            LOGI("Хук на отрисовку установлен!");
+            LOGI("Хук на eglSwapBuffers установлен!");
+        } else {
+            LOGI("ОШИБКА: Не нашли eglSwapBuffers!");
         }
+    } else {
+         LOGI("ОШИБКА: Не смогли открыть libEGL.so!");
     }
 }
 
