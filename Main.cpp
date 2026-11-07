@@ -4,6 +4,7 @@
 #include <dlfcn.h>
 #include <sys/mman.h>
 #include <string.h>
+#include <stdint.h>
 
 #define LOG_TAG "CHAD_CHEAT"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -12,12 +13,12 @@
 void (*orig_abort)();
 
 // Наш хук
-void hook_abort() {
+extern "C" void hook_abort() {
     LOGI("BYPASS: Перехвачен abort()! Игра пыталась упасть.");
 }
 
-// Функция для установки хука (меняет первые инструкции функции на прыжок)
-void inline_hook(void* target, void* replace, void** backup) {
+// Функция для установки хука
+extern "C" void inline_hook(void* target, void* replace, void** backup) {
     if (!target) return;
     
     // Сохраняем оригинальные байты (первые 16 байт)
@@ -30,17 +31,16 @@ void inline_hook(void* target, void* replace, void** backup) {
     mprotect((void*)page_start, page_size * 2, PROT_READ | PROT_WRITE | PROT_EXEC);
 
     // Патчим под ARM64 (LDR X16, #8; BR X16; <target_address>)
-    // Это прыжок на наш хук (replace)
     uint32_t* patch = (uint32_t*)target;
     patch[0] = 0x58000050; // LDR X16, #8
     patch[1] = 0xd61f0200; // BR X16
-    patch[2] = ((uintptr_t)replace & 0xFFFFFFFF); // Адрес хука (нижние 32 бита)
-    patch[3] = ((uintptr_t)replace >> 32);        // Адрес хука (верхние 32 бита)
+    patch[2] = (uint32_t)((uintptr_t)replace & 0xFFFFFFFF); // Нижние 32 бита
+    patch[3] = (uint32_t)((uintptr_t)replace >> 32);        // Верхние 32 бита
     
     // Очищаем кэш инструкций
     __builtin___clear_cache((char*)target, (char*)target + 16);
     
-    // Возвращаем защиту (опционально)
+    // Возвращаем защиту
     mprotect((void*)page_start, page_size * 2, PROT_READ | PROT_EXEC);
 }
 
@@ -60,6 +60,6 @@ void on_load() {
     }
 }
 
-JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
+extern "C" JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved) {
     return JNI_VERSION_1_6;
 }
