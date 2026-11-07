@@ -5,6 +5,7 @@
 #include <sys/mman.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdlib.h> // <--- ВОТ ЭТА СТРОЧКА РЕШАЕТ ВСЁ
 
 #define LOG_TAG "CHAD_CHEAT"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
