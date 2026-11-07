@@ -8,7 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <pthread.h>
-#include <link.h> // Для поиска базового адреса
+#include <link.h>
 
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
@@ -26,44 +26,40 @@ uintptr_t g_libloader_base = 0;
 
 EGLBoolean (*orig_eglSwapBuffers)(EGLDisplay dpy, EGLSurface surface);
 
-// Ищем базовый адрес библиотеки libloader.so в памяти
-int find_libloader(struct dl_phdr_info *info, size_t size, void *data) {
-    if (strstr(info->dlpi_name, "libloader.so") != NULL) {
-        g_libloader_base = info->dlpi_addr;
-        LOGI("Нашли libloader.so! База: 0x%lx", g_libloader_base);
-        return 1; // Останавливаем поиск
-    }
-    return 0;
-}
-
-// Функция-патчер
-void patch_libloader() {
-    while (g_libloader_base == 0) {
-        dl_iterate_phdr(find_libloader, NULL);
-        sleep(1); // Ждем, пока игра загрузит библиотеку
-    }
-
-    // Смещение из твоего лога
-    uintptr_t target_addr = g_libloader_base + 0x778480;
-    
-    // Делаем память доступной для записи
-    uintptr_t page_size = sysconf(_SC_PAGESIZE);
-    uintptr_t page_start = target_addr & ~(page_size - 1);
-    mprotect((void*)page_start, page_size * 2, PROT_READ | PROT_WRITE | PROT_EXEC);
-
-    // Патчим инструкцию на RET (возврат) 0xC0035FD6, чтобы функция просто вышла
-    uint32_t* patch = (uint32_t*)target_addr;
-    patch[0] = 0xd65f03c0; // RET в ARM64
-
-    __builtin___clear_cache((char*)target_addr, (char*)target_addr + 4);
-    mprotect((void*)page_start, page_size * 2, PROT_READ | PROT_EXEC);
-    
-    LOGI("=== АНТИЧИТ В libloader.so ПО АДРЕСУ 0x778480 УСПЕШНО ЗАБЛОКИРОВАН! ===");
-}
-
-// Поток для патча
+// Поток, который ждет загрузки libloader.so и патчит её
 void* patch_thread(void*) {
-    patch_libloader();
+    LOGI("=== ПОТОК ПАТЧЕРА ЗАПУЩЕН ===");
+    while (true) {
+        void* handle = dlopen("libloader.so", RTLD_NOLOAD | RTLD_LAZY);
+        if (handle) {
+            // Получаем базовый адрес
+            struct link_map* map;
+            dlinfo(handle, RTLD_DI_LINKMAP, &map);
+            g_libloader_base = map->l_addr;
+            
+            LOGI("libloader.so найдена! База: 0x%lx", g_libloader_base);
+            
+            // Адрес краша из твоего лога
+            uintptr_t target_addr = g_libloader_base + 0x778480;
+            
+            // Делаем память доступной для записи
+            uintptr_t page_size = sysconf(_SC_PAGESIZE);
+            uintptr_t page_start = target_addr & ~(page_size - 1);
+            mprotect((void*)page_start, page_size * 2, PROT_READ | PROT_WRITE | PROT_EXEC);
+
+            // Патчим на MOV X0, #0 ; RET (возврат null)
+            uint32_t* patch = (uint32_t*)target_addr;
+            patch[0] = 0xd2800000; // MOV X0, #0
+            patch[1] = 0xd65f03c0; // RET
+
+            __builtin___clear_cache((char*)target_addr, (char*)target_addr + 8);
+            mprotect((void*)page_start, page_size * 2, PROT_READ | PROT_EXEC);
+            
+            LOGI("=== АНТИЧИТ В libloader.so (0x778480) ЗАПАТЧЕН НА NULL! ===");
+            break;
+        }
+        usleep(10000); // Ждем 10 мс
+    }
     return nullptr;
 }
 
@@ -113,9 +109,9 @@ void inline_hook(void* target, void* replace, void** backup) {
 
 __attribute__((constructor))
 void on_load() {
-    LOGI("=== CHAD PLUGIN: ОХОТА НА АНТИЧИТ ===");
+    LOGI("=== CHAD PLUGIN: ЗАГРУЖЕН ===");
 
-    // Запускаем поток для поиска и патча libloader.so
+    // Запускаем патчер
     pthread_t thread;
     pthread_create(&thread, nullptr, patch_thread, nullptr);
 
